@@ -14,5 +14,21 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'mui-vendor': ['@mui/material', '@mui/icons-material'],
+          'chart-vendor': ['chart.js', 'react-chartjs-2']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 600,
+    minify: 'esbuild'
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', '@mui/material', 'axios']
   }
 })

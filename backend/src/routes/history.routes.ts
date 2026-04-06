@@ -1,12 +1,11 @@
 import { Router, Request, Response } from 'express';
 import Lookup from '../models/Lookup';
-import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
 const router = Router();
 
 // GET /api/history - Get lookup history
-router.get('/', optionalAuthMiddleware, async (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
     const {
       page = 1,
@@ -19,11 +18,6 @@ router.get('/', optionalAuthMiddleware, async (req: Request, res: Response) => {
 
     // Build query
     const query: any = {};
-
-    // Filter by user if authenticated
-    if (req.user) {
-      query.userId = req.user.id;
-    }
 
     // Filter by verdict
     if (verdict && (verdict === 'PROXY/VPN' || verdict === 'ORIGINAL')) {
@@ -87,7 +81,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/history/:id - Delete lookup
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const lookup = await Lookup.findById(req.params.id);
 
@@ -115,7 +109,7 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/history/export - Export history as CSV
-router.get('/export/csv', optionalAuthMiddleware, async (req: Request, res: Response) => {
+router.get('/export/csv', async (req: Request, res: Response) => {
   try {
     const query: any = {};
     if (req.user) {
@@ -143,7 +137,7 @@ router.get('/export/csv', optionalAuthMiddleware, async (req: Request, res: Resp
 });
 
 // GET /api/history/stats - Get statistics
-router.get('/stats/overview', optionalAuthMiddleware, async (req: Request, res: Response) => {
+router.get('/stats/overview', async (req: Request, res: Response) => {
   try {
     const query: any = {};
     if (req.user) {

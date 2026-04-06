@@ -9,6 +9,7 @@ import cacheService from './services/cache.service';
 // Routes
 import detectRouter from './routes/detect-simple';
 import historyRouter from './routes/history.routes';
+import bulkRouter from './routes/bulk.routes';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -65,6 +66,7 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/detect', detectRouter);
 app.use('/api/history', historyRouter);
+app.use('/api/bulk', bulkRouter);
 
 // 404 handler
 app.use((req, res) => {

@@ -42,3 +42,16 @@ coverage/
 # Misc
 .tmp/
 temp/
+
+# Screenshots
+scrnsts/
+*.png
+*.jpg
+*.jpeg
+
+# PDF files
+*.pdf
+
+# Test CSV files
+test-*.csv
+

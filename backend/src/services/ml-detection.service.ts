@@ -5,43 +5,254 @@ import axios from 'axios';
 const execAsync = promisify(exec);
 
 interface MLFeatures {
-  rttScore: number;        // Round Trip Time score
-  geoConsistency: number;  // Geographic location consistency score
-  timeSeriesScore: number; // Time series pattern score
-  portActivityScore: number; // Port activity pattern score
+  rttScore: number;
+  geoConsistency: number;
+  timeSeriesScore: number;
+  portActivityScore: number;
+  behavioralScore: number;
+  reputationScore: number;
+  anomalyScore: number;
+}
+
+interface BehavioralPattern {
+  connectionFrequency: number;
+  trafficVolume: number;
+  sessionDuration: number;
+  unusualTiming: boolean;
+}
+
+interface ReputationData {
+  historicalDetections: number;
+  communityReports: number;
+  knownVPNProvider: boolean;
+  trustScore: number;
 }
 
 export class MLDetectionService {
   private static readonly TIME_WINDOW = 300000; // 5 minutes
   private static readonly MIN_SAMPLES = 5;
   private static readonly SUSPICIOUS_PORTS = [
-    1194, // OpenVPN
-    1723, // PPTP
-    500,  // IPSec
-    4500, // IPSec NAT
-    1701, // L2TP
-    8080, // HTTP Proxy
-    3128  // Squid Proxy
+    1194, 1723, 500, 4500, 1701, 8080, 3128, 9040 // Added Tor
   ];
+  
+  // Simple in-memory reputation cache (production should use Redis/DB)
+  private static reputationCache = new Map<string, ReputationData>();
+  private static behavioralHistory = new Map<string, BehavioralPattern[]>();
 
   /**
-   * Collect real-time network metrics
+   * Advanced ML-based VPN detection with behavioral analysis
    */
-  static async collectNetworkMetrics(ip: string): Promise<MLFeatures> {
-    const [rttData, geoData, portData] = await Promise.all([
+  static async detectWithML(ip: string): Promise<{ isVPN: boolean; confidence: number; features: MLFeatures }> {
+    const features = await this.collectAdvancedMetrics(ip);
+    
+    // Weighted scoring algorithm
+    const weights = {
+      rtt: 0.15,
+      geo: 0.20,
+      timeSeries: 0.15,
+      port: 0.15,
+      behavioral: 0.20,
+      reputation: 0.10,
+      anomaly: 0.05
+    };
+
+    const overallScore = 
+      features.rttScore * weights.rtt +
+      features.geoConsistency * weights.geo +
+      features.timeSeriesScore * weights.timeSeries +
+      features.portActivityScore * weights.port +
+      features.behavioralScore * weights.behavioral +
+      features.reputationScore * weights.reputation +
+      features.anomalyScore * weights.anomaly;
+
+    const confidence = Math.min(Math.max(overallScore, 0), 100);
+    const isVPN = confidence > 60;
+
+    return { isVPN, confidence, features };
+  }
+
+  /**
+   * Collect advanced network metrics with ML features
+   */
+  private static async collectAdvancedMetrics(ip: string): Promise<MLFeatures> {
+    const [
+      rttData,
+      geoData,
+      portData,
+      timeSeriesData,
+      behavioralData,
+      reputationData,
+      anomalyData
+    ] = await Promise.all([
       this.measureRTTVariation(ip),
       this.checkGeoConsistency(ip),
-      this.analyzePortActivity(ip)
+      this.analyzePortActivity(ip),
+      this.analyzeTimeSeries(ip),
+      this.analyzeBehavioralPatterns(ip),
+      this.checkReputation(ip),
+      this.detectAnomalies(ip)
     ]);
-
-    const timeSeriesScore = await this.analyzeTimeSeries(ip);
 
     return {
       rttScore: rttData,
       geoConsistency: geoData,
-      timeSeriesScore: timeSeriesScore,
-      portActivityScore: portData
+      timeSeriesScore: timeSeriesData,
+      portActivityScore: portData,
+      behavioralScore: behavioralData,
+      reputationScore: reputationData,
+      anomalyScore: anomalyData
     };
+  }
+
+  /**
+   * Analyze behavioral patterns using historical data
+   */
+  private static async analyzeBehavioralPatterns(ip: string): Promise<number> {
+    const history = this.behavioralHistory.get(ip) || [];
+    
+    // Record current pattern
+    const currentPattern: BehavioralPattern = {
+      connectionFrequency: Math.random() * 100, // Simulated - should track real connections
+      trafficVolume: Math.random() * 1000,
+      sessionDuration: Math.random() * 3600,
+      unusualTiming: this.detectUnusualTiming()
+    };
+
+    history.push(currentPattern);
+    if (history.length > 100) history.shift();
+    this.behavioralHistory.set(ip, history);
+
+    if (history.length < 3) return 50; // Insufficient data
+
+    // Analyze consistency
+    const frequencies = history.map(h => h.connectionFrequency);
+    const mean = frequencies.reduce((a, b) => a + b, 0) / frequencies.length;
+    const stdDev = Math.sqrt(
+      frequencies.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / frequencies.length
+    );
+
+    // High variance suggests rotating IPs (common with VPNs)
+    const normalizedStdDev = stdDev / (mean || 1);
+    const consistencyScore = Math.max(0, 100 - normalizedStdDev * 50);
+
+    // Penalize unusual timing
+    if (currentPattern.unusualTiming) {
+      return Math.max(0, consistencyScore - 30);
+    }
+
+    return consistencyScore;
+  }
+
+  /**
+   * Check IP reputation from multiple sources
+   */
+  private static async checkReputation(ip: string): Promise<number> {
+    let cached = this.reputationCache.get(ip);
+    
+    if (!cached) {
+      cached = {
+        historicalDetections: 0,
+        communityReports: 0,
+        knownVPNProvider: await this.isKnownVPNProvider(ip),
+        trustScore: 100
+      };
+      this.reputationCache.set(ip, cached);
+    }
+
+    let score = cached.trustScore;
+
+    // Known VPN provider is high confidence
+    if (cached.knownVPNProvider) score -= 50;
+    
+    // Historical detections reduce trust
+    score -= Math.min(cached.historicalDetections * 5, 30);
+    
+    // Community reports impact
+    score -= Math.min(cached.communityReports * 3, 20);
+
+    return Math.max(0, score);
+  }
+
+  /**
+   * Detect anomalies using statistical methods (simplified k-means clustering)
+   */
+  private static async detectAnomalies(ip: string): Promise<number> {
+    const features = await this.extractAnomalyFeatures(ip);
+    
+    // Simulated cluster centroids (in production, these would be learned from data)
+    const normalCentroid = { rtt: 50, ports: 2, geo: 90 };
+    const vpnCentroid = { rtt: 120, ports: 5, geo: 40 };
+
+    // Calculate distances
+    const distanceToNormal = this.euclideanDistance(features, normalCentroid);
+    const distanceToVPN = this.euclideanDistance(features, vpnCentroid);
+
+    // Score based on proximity to VPN cluster
+    const totalDistance = distanceToNormal + distanceToVPN;
+    const anomalyScore = (distanceToVPN / totalDistance) * 100;
+
+    return anomalyScore;
+  }
+
+  /**
+   * Extract features for anomaly detection
+   */
+  private static async extractAnomalyFeatures(ip: string): Promise<{ rtt: number; ports: number; geo: number }> {
+    return {
+      rtt: await this.measureRTTVariation(ip),
+      ports: 100 - await this.analyzePortActivity(ip),
+      geo: await this.checkGeoConsistency(ip)
+    };
+  }
+
+  /**
+   * Calculate Euclidean distance between feature vectors
+   */
+  private static euclideanDistance(
+    a: { rtt: number; ports: number; geo: number },
+    b: { rtt: number; ports: number; geo: number }
+  ): number {
+    return Math.sqrt(
+      Math.pow(a.rtt - b.rtt, 2) +
+      Math.pow(a.ports - b.ports, 2) +
+      Math.pow(a.geo - b.geo, 2)
+    );
+  }
+
+  /**
+   * Check if IP belongs to known VPN provider
+   */
+  private static async isKnownVPNProvider(ip: string): Promise<boolean> {
+    // Check against known VPN ASNs and IP ranges
+    const knownVPNASNs = ['AS62044', 'AS396982', 'AS54825']; // NordVPN, ExpressVPN, etc.
+    
+    try {
+      const whoisData = await this.performWhoisLookup(ip);
+      return knownVPNASNs.some(asn => whoisData.includes(asn));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Perform WHOIS lookup
+   */
+  private static async performWhoisLookup(ip: string): Promise<string> {
+    try {
+      const { stdout } = await execAsync(`whois ${ip}`, { timeout: 5000 });
+      return stdout;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Detect unusual timing patterns
+   */
+  private static detectUnusualTiming(): boolean {
+    const hour = new Date().getHours();
+    // Connections during unusual hours (2-6 AM) might indicate automation
+    return hour >= 2 && hour <= 6;
   }
 
   /**

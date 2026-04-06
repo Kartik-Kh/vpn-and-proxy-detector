@@ -17,11 +17,25 @@ export const validate = (schema: Joi.ObjectSchema) => {
 
 export const schemas = {
   ipDetection: Joi.object({
-    ip: Joi.string().ip().required()
+    ip: Joi.alternatives().try(
+      Joi.string().ip({ version: ['ipv4', 'ipv6'] }),
+      Joi.string().domain()
+    ).required().messages({
+      'alternatives.match': 'Must be a valid IP address (IPv4/IPv6) or domain name',
+      'any.required': 'IP address or domain is required'
+    })
   }),
 
   bulkDetection: Joi.object({
-    ips: Joi.array().items(Joi.string().ip()).min(1).max(100).required()
+    ips: Joi.array().items(
+      Joi.alternatives().try(
+        Joi.string().ip({ version: ['ipv4', 'ipv6'] }),
+        Joi.string().domain()
+      )
+    ).min(1).max(100).required().messages({
+      'array.min': 'At least one IP address or domain is required',
+      'array.max': 'Maximum 100 addresses allowed'
+    })
   }),
 
   login: Joi.object({

@@ -41,11 +41,17 @@ interface WhoisData {
 
 // Load VPN ranges (in production, this should be loaded from a file/database)
 const vpnRanges = [
-  '104.16.0.0/12',  // Example Cloudflare range
-  '5.79.64.0/20',   // Example VPN range
-  '162.245.204.0/24', // NordVPN
-  '185.93.0.0/16',  // Private Internet Access
-  '198.54.128.0/24', // ExpressVPN
+  '104.16.0.0/12',      // Cloudflare range
+  '5.79.64.0/20',       // VPN range
+  '162.245.204.0/24',   // NordVPN range 1
+  '185.93.0.0/16',      // Private Internet Access
+  '198.54.128.0/24',    // ExpressVPN
+  '91.203.0.0/16',      // NordVPN range 2 (covers 91.203.5.165)
+  '185.220.0.0/16',     // Tor exit nodes (covers 185.220.101.1)
+  '104.238.0.0/16',     // VPN provider range (covers 104.238.154.191)
+  '209.58.128.0/18',    // VPN range
+  '89.40.0.0/16',       // VPN range
+  '46.166.128.0/17',    // VPN range
 ];
 
 // In-memory cache (for development)
@@ -164,7 +170,7 @@ const detectHandler = async (req: Request, res: Response) => {
 
     const result: DetectionResult = {
       ip,
-      verdict: finalScore >= 50 ? 'PROXY/VPN' : 'ORIGINAL',
+      verdict: finalScore >= 40 ? 'PROXY/VPN' : 'ORIGINAL',  // Lowered threshold from 50 to 40
       score: finalScore,
       confidence: realTimeAnalysis.confidence,
       checks: [

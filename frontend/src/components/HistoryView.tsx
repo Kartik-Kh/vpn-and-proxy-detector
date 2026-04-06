@@ -23,6 +23,7 @@ import HistoryIcon from '@mui/icons-material/History';
 
 interface HistoryEntry {
   ip: string;
+  inputDomain?: string | null;
   verdict: string;
   score: number;
   threatLevel: string;
@@ -41,6 +42,7 @@ const HistoryView = () => {
 
   useEffect(() => {
     applyFilters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history, verdictFilter]);
 
   const loadHistory = () => {
@@ -72,6 +74,8 @@ const HistoryView = () => {
     if (window.confirm('Are you sure you want to clear all history?')) {
       localStorage.removeItem('vpn_detection_history');
       setHistory([]);
+      // Trigger storage event for Dashboard to update
+      window.dispatchEvent(new Event('storage'));
     }
   };
 
@@ -124,14 +128,59 @@ const HistoryView = () => {
   };
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: '#fafafa', pt: 10 }}>
-      <Container maxWidth="lg">
-        <Paper sx={{ p: 3 }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
+    <Box
+      sx={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        pt: 6,
+        pb: 6,
+      }}
+    >
+      <Container maxWidth="xl">
+        {/* Header */}
+        <Box sx={{ textAlign: 'center', mb: 6 }}>
+          <Typography
+            variant="h2"
+            sx={{
+              fontWeight: 800,
+              fontSize: { xs: '2rem', md: '3rem' },
+              color: 'white',
+              textShadow: '0 4px 12px rgba(0,0,0,0.2)',
+              mb: 2,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
+            }}
+          >
+            <HistoryIcon sx={{ fontSize: { xs: '2rem', md: '3rem' } }} /> Lookup History
+          </Typography>
+          <Typography
+            variant="h6"
+            sx={{
+              color: 'rgba(255,255,255,0.95)',
+              fontWeight: 300,
+            }}
+          >
+            Review all your previous IP scans and detection results
+          </Typography>
+        </Box>
+
+        <Paper
+          elevation={8}
+          sx={{
+            p: { xs: 3, md: 4 },
+            borderRadius: 3,
+            background: 'rgba(255, 255, 255, 0.98)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+          }}
+        >
+          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }} flexWrap="wrap" gap={2}>
             <Stack direction="row" alignItems="center" spacing={1}>
-              <HistoryIcon sx={{ fontSize: 32, color: 'primary.main' }} />
-              <Typography variant="h5">
-                Lookup History
+              <HistoryIcon sx={{ fontSize: 32, color: '#667eea' }} />
+              <Typography variant="h5" sx={{ fontWeight: 600 }}>
+                Detection History
               </Typography>
             </Stack>
             
@@ -144,9 +193,8 @@ const HistoryView = () => {
                 sx={{ minWidth: 150 }}
               >
                 <MenuItem value="ALL">All Results</MenuItem>
-                <MenuItem value="CLEAN">Clean</MenuItem>
-                <MenuItem value="SUSPICIOUS">Suspicious</MenuItem>
-                <MenuItem value="VPN_DETECTED">VPN Detected</MenuItem>
+                <MenuItem value="ORIGINAL">Clean / Original</MenuItem>
+                <MenuItem value="PROXY/VPN">VPN / Proxy</MenuItem>
               </TextField>
               
               <Button
@@ -154,6 +202,11 @@ const HistoryView = () => {
                 startIcon={<DownloadIcon />}
                 onClick={exportToCSV}
                 disabled={filteredHistory.length === 0}
+                sx={{
+                  borderColor: '#667eea',
+                  color: '#667eea',
+                  '&:hover': { borderColor: '#764ba2', color: '#764ba2', bgcolor: 'rgba(102,126,234,0.04)' },
+                }}
               >
                 Export CSV
               </Button>
@@ -182,22 +235,34 @@ const HistoryView = () => {
             </Box>
           ) : (
             <>
-              <TableContainer>
+            <TableContainer>
                 <Table>
                   <TableHead>
-                    <TableRow>
-                      <TableCell><strong>IP Address</strong></TableCell>
-                      <TableCell><strong>Verdict</strong></TableCell>
-                      <TableCell align="center"><strong>Score</strong></TableCell>
-                      <TableCell align="center"><strong>Threat Level</strong></TableCell>
-                      <TableCell><strong>Timestamp</strong></TableCell>
-                      <TableCell align="center"><strong>Cached</strong></TableCell>
+                    <TableRow sx={{ bgcolor: 'rgba(102, 126, 234, 0.08)' }}>
+                      <TableCell sx={{ fontWeight: 700 }}>📍 IP Address</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>🎯 Verdict</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>💯 Score</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>⚡ Threat Level</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>🕐 Timestamp</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>Cache</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {filteredHistory.map((entry, index) => (
-                      <TableRow key={index} hover>
+                      <TableRow
+                        key={index}
+                        hover
+                        sx={{
+                          '&:hover': { bgcolor: 'rgba(102, 126, 234, 0.04)' },
+                          transition: 'background-color 0.2s',
+                        }}
+                      >
                         <TableCell>
+                          {entry.inputDomain && (
+                            <Typography variant="caption" sx={{ color: '#8e44ad', fontFamily: 'monospace', display: 'block', lineHeight: 1.2 }}>
+                              🌐 {entry.inputDomain}
+                            </Typography>
+                          )}
                           <Typography variant="body2" fontFamily="monospace">
                             {entry.ip}
                           </Typography>

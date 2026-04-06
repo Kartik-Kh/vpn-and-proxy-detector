@@ -14,7 +14,10 @@ export interface DetectionResult {
     score?: number;
     provider?: string;
   }>;
-  whois?: any;
+  whois?: {
+    raw?: string;
+    parsed?: Record<string, unknown>;
+  };
   timestamp: string;
   cached?: boolean;
   analysis: {
@@ -23,6 +26,10 @@ export interface DetectionResult {
     isTor: boolean;
     isHosting: boolean;
   };
+  // Domain resolution fields
+  inputType?: 'ip' | 'domain';
+  originalInput?: string;
+  resolvedIP?: string;
 }
 
 export interface BulkUploadResponse {
@@ -54,8 +61,9 @@ class VPNDetectionService {
         { headers: this.getAuthHeader() }
       );
       return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Detection failed');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      throw new Error(err.response?.data?.message || 'Detection failed');
     }
   }
 
@@ -71,8 +79,9 @@ class VPNDetectionService {
         },
       });
       return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Upload failed');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      throw new Error(err.response?.data?.message || 'Upload failed');
     }
   }
 
@@ -82,14 +91,15 @@ class VPNDetectionService {
         headers: this.getAuthHeader(),
       });
       return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to get job status');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      throw new Error(err.response?.data?.message || 'Failed to get job status');
     }
   }
 
   async getHistory(page: number = 1, limit: number = 20, verdict?: string) {
     try {
-      const params: any = { page, limit };
+      const params: Record<string, string | number> = { page, limit };
       if (verdict) params.verdict = verdict;
 
       const response = await axios.get(`${API_URL}/history`, {
@@ -97,8 +107,9 @@ class VPNDetectionService {
         params,
       });
       return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch history');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      throw new Error(err.response?.data?.message || 'Failed to fetch history');
     }
   }
 
@@ -117,8 +128,9 @@ class VPNDetectionService {
       document.body.appendChild(link);
       link.click();
       link.remove();
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Export failed');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      throw new Error(err.response?.data?.message || 'Export failed');
     }
   }
 }

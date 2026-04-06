@@ -3,8 +3,9 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { v4 as uuidv4 } from 'uuid';
 import { optionalAuthMiddleware } from '../middleware/auth.middleware';
-import { DetectionService } from '../services/detection.service';
+import cacheService from '../services/cache.service';
 import { logger } from '../config/logger';
+import axios from 'axios';
 
 const router = Router();
 
@@ -26,11 +27,140 @@ const upload = multer({
 // In-memory job storage (replace with Redis in production)
 const jobs = new Map<string, any>();
 
+// Known VPN/datacenter IP range patterns
+const VPN_RANGES = [
+  { provider: 'NordVPN',    pattern: /^(185\.201\.|193\.29\.|212\.102\.|91\.203\.|185\.220\.)/ },
+  { provider: 'ExpressVPN', pattern: /^(149\.248\.|103\.253\.|169\.50\.)/ },
+  { provider: 'ProtonVPN',  pattern: /^(138\.199\.|149\.90\.|185\.159\.)/ },
+  { provider: 'Surfshark',  pattern: /^(217\.138\.|37\.120\.|185\.225\.)/ },
+  { provider: 'Mullvad',    pattern: /^(193\.138\.|194\.165\.|185\.213\.)/ },
+  { provider: 'PIA',        pattern: /^(209\.222\.|178\.162\.|84\.17\.)/ },
+  { provider: 'HideMyAss',  pattern: /^(46\.246\.|31\.171\.|194\.116\.)/ },
+  { provider: 'Datacenter', pattern: /^(104\.238\.|104\.16\.|198\.199\.|159\.203\.)/ },
+];
+
+// Known datacenter/hosting ASN keywords
+const HOSTING_KEYWORDS = [
+  'hosting', 'datacenter', 'data center', 'cloud', 'server', 'dedicated',
+  'virtual private', 'vps', 'infrastructure', 'digitalocean', 'linode',
+  'vultr', 'amazon', 'google', 'microsoft azure', 'ovh', 'hetzner',
+  'cloudflare', 'fastly', 'akamai', 'leaseweb', 'choopa',
+];
+
+// Tor exit-node hostname keywords
+const TOR_KEYWORDS = ['tor', 'exit', 'relay', 'onion', 'darknet'];
+
+// Full IP detection used by bulk CSV jobs
+async function detectIPFull(ip: string): Promise<any> {
+  const cacheKey = `bulk:${ip}`;
+  const cached = await cacheService.get(cacheKey);
+  if (cached) return { ...cached, cached: true };
+
+  const checks: any[] = [];
+  let score = 0;
+
+  // 1. Known VPN range match
+  const rangeMatch = VPN_RANGES.find(r => r.pattern.test(ip));
+  if (rangeMatch) {
+    checks.push({ type: 'VPN Range Match', result: true, details: `Matched ${rangeMatch.provider} IP range` });
+    score += 60;
+  }
+
+  // 2. Private IP
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) {
+    checks.push({ type: 'Private IP', result: true, details: 'Private/reserved address space' });
+    score += 15;
+  }
+
+  // 3. IPQualityScore
+  if (process.env.IPQUALITYSCORE_API_KEY) {
+    try {
+      const r = await axios.get(
+        `https://ipqualityscore.com/api/json/ip/${process.env.IPQUALITYSCORE_API_KEY}/${ip}`,
+        { timeout: 5000 }
+      );
+      if (r.data.success) {
+        const vpn = r.data.vpn || r.data.proxy || r.data.tor;
+        const fraud = r.data.fraud_score || 0;
+        checks.push({ type: 'IPQualityScore', result: vpn, details: `Fraud:${fraud} VPN:${r.data.vpn} Proxy:${r.data.proxy} Tor:${r.data.tor}` });
+        if (vpn) score += 25;
+        score += Math.min(fraud / 4, 15);
+        if (r.data.tor) score += 20;
+      }
+    } catch { /* skip on timeout */ }
+  }
+
+  // 4. AbuseIPDB
+  if (process.env.ABUSEIPDB_API_KEY) {
+    try {
+      const r = await axios.get(
+        `https://api.abuseipdb.com/api/v2/check?ipAddress=${ip}`,
+        { headers: { Key: process.env.ABUSEIPDB_API_KEY }, timeout: 5000 }
+      );
+      if (r.data.data) {
+        const abuse = r.data.data.abuseConfidenceScore || 0;
+        checks.push({ type: 'AbuseIPDB', result: abuse > 50, details: `Abuse score: ${abuse}%` });
+        if (abuse > 75) score += 15;
+        else if (abuse > 50) score += 8;
+      }
+    } catch { /* skip */ }
+  }
+
+  // 5. IPInfo — org/ASN hosting detection
+  if (process.env.IPINFO_TOKEN) {
+    try {
+      const r = await axios.get(`https://ipinfo.io/${ip}/json?token=${process.env.IPINFO_TOKEN}`, { timeout: 5000 });
+      if (r.data) {
+        const org = (r.data.org || '').toLowerCase();
+        const isHosting = HOSTING_KEYWORDS.some(k => org.includes(k));
+        checks.push({
+          type: 'IPInfo ASN',
+          result: isHosting,
+          details: `Org: ${r.data.org || 'Unknown'}, ${r.data.city || ''}, ${r.data.country || ''}`,
+          location: `${r.data.city || ''}, ${r.data.country || ''}`,
+        });
+        if (isHosting) score += 12;
+      }
+    } catch { /* skip */ }
+  }
+
+  // 6. Reverse DNS — VPN/Tor/proxy keywords
+  try {
+    const { promises: dns } = await import('dns');
+    const hostnames = await dns.reverse(ip).catch(() => [] as string[]);
+    const suspicious = hostnames.some(h =>
+      [...TOR_KEYWORDS, 'vpn', 'proxy'].some(k => h.toLowerCase().includes(k))
+    );
+    if (suspicious) {
+      checks.push({ type: 'Reverse DNS', result: true, details: `Suspicious hostname: ${hostnames[0]}` });
+      score += 18;
+    }
+  } catch { /* skip */ }
+
+  score = Math.min(Math.max(Math.round(score), 0), 100);
+  const verdict = score >= 40 ? 'PROXY/VPN' : 'ORIGINAL';
+  const threatLevel = score > 65 ? 'HIGH' : score > 40 ? 'MEDIUM' : score > 20 ? 'LOW' : 'CLEAN';
+
+  const result = { ip, verdict, score, threatLevel, checks, timestamp: new Date().toISOString(), cached: false };
+  await cacheService.set(cacheKey, result, 1800);
+  return result;
+}
+
 // POST /api/bulk/upload - Upload CSV for bulk analysis
+const uploadMiddleware = (req: Request, res: Response, next: any) => {
+  upload.single('file')(req, res, (err: any) => {
+    if (err) {
+      logger.error('Multer upload error:', err);
+      return res.status(400).json({ error: err.message || 'File upload error' });
+    }
+    next();
+  });
+};
+
 router.post(
   '/upload',
   optionalAuthMiddleware,
-  upload.single('file'),
+  uploadMiddleware,
   async (req: Request, res: Response) => {
     try {
       if (!req.file) {
@@ -53,6 +183,12 @@ router.post(
       if (ips.length === 0) {
         return res.status(400).json({
           error: 'No valid IP addresses found in CSV file',
+        });
+      }
+
+      if (ips.length > 100) {
+        return res.status(400).json({
+          error: `CSV contains ${ips.length} IPs. Maximum allowed is 100 IPs per upload.`,
         });
       }
 
@@ -185,21 +321,17 @@ async function processBulkJob(jobId: string, ips: string[], io: any) {
 
   job.status = 'processing';
   const batchSize = parseInt(process.env.BULK_BATCH_SIZE || '10');
-  const concurrentLimit = parseInt(process.env.BULK_CONCURRENT_LIMIT || '5');
 
   try {
     for (let i = 0; i < ips.length; i += batchSize) {
       const batch = ips.slice(i, i + batchSize);
 
-      // Process batch with concurrency limit
       const promises = batch.map((ip) =>
-        DetectionService.detectIP(ip)
+        detectIPFull(ip)
           .then((result) => {
             job.results.push(result);
             job.processed++;
-
-            // Emit progress via Socket.io
-            io.emit(`bulk-progress-${jobId}`, {
+            io?.emit?.(`bulk-progress-${jobId}`, {
               jobId,
               processed: job.processed,
               total: job.total,
@@ -212,6 +344,7 @@ async function processBulkJob(jobId: string, ips: string[], io: any) {
               ip,
               verdict: 'ERROR',
               score: 0,
+              threatLevel: 'UNKNOWN',
               error: error.message,
             });
             job.processed++;
@@ -219,32 +352,23 @@ async function processBulkJob(jobId: string, ips: string[], io: any) {
       );
 
       await Promise.all(promises);
-
-      // Small delay between batches to avoid overwhelming the system
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     job.status = 'completed';
     job.completedAt = new Date();
-
-    // Emit completion
-    io.emit(`bulk-complete-${jobId}`, {
+    io?.emit?.(`bulk-complete-${jobId}`, {
       jobId,
       status: 'completed',
       total: job.total,
       processed: job.processed,
     });
-
     logger.info(`Bulk job completed: ${jobId}`);
   } catch (error) {
     logger.error(`Bulk job ${jobId} failed:`, error);
     job.status = 'failed';
     job.error = error instanceof Error ? error.message : 'Unknown error';
-
-    io.emit(`bulk-error-${jobId}`, {
-      jobId,
-      error: job.error,
-    });
+    io?.emit?.(`bulk-error-${jobId}`, { jobId, error: job.error });
   }
 }
 
